@@ -1,0 +1,569 @@
+---
+title: "Rescaled version"
+author: "Mehdi BOUDAOUD"
+date: "2024-07-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import libraries
+
+```{r}
+library(readxl)
+library(dplyr)
+library(data.table)
+```
+
+## Load data
+
+```{r}
+## Load Stations names 
+X92st_list <- read_excel("Data/92st_list.xlsx")
+X92st_list$St_Name[c(65,66,67)] <- c(
+  "QUEBEC_JEAN LESAGE INTL A",
+  "MONTREAL_PIERRE ELLIOTT TRUDEAU INTL A",
+  "MONTREAL_MIRABEL INT'L A"
+)
+StationsNames <- X92st_list$St_Name
+Data_list <- list()
+for (St in StationsNames) {
+  print(paste0(
+    "Loading : ", St
+  ))
+  
+  ## Assign the path
+  St_path <- "Data/92st_RData/" |> 
+    paste0(St, ".RData")
+  
+  ## Load df
+  load(St_path)
+  
+  ## Filter data 
+  df$Year <- df$Date |> 
+    format("%Y")
+  df <- df |> 
+    dplyr::filter(Temp > -100) |> 
+    dplyr::filter(Year > 1980) |> 
+    dplyr::filter(Year < 2012)
+  
+  ## Save the data in a list
+  Data_list[[St]] <- df
+}
+```
+
+
+## Define the rescale function
+
+This function takes a data frame of station as input and return a list containing the re-scaled data, the minimum and maximum values.
+```{r}
+rescale <- function(df){
+  df_min <- df$Temp |> min()
+  df_max <- df$Temp |> max()
+  
+  df$Temp <- 
+    (df$Temp - min(df$Temp))/(max(df$Temp) - min(df$Temp))
+  
+  list(
+    "Data" = df,
+    "Max" = df_max,
+    "Min" = df_min
+  )
+}
+```
+
+
+## Calculate the bandwith minimum to have a certain number of modes 
+
+
+```{r}
+MAX_MODES <- 5
+
+bandwiths <- matrix(
+  ncol = MAX_MODES + 1,
+  nrow = 92
+) |> as.data.frame()
+
+names(bandwiths) <- 
+  c(
+    "Station",
+    paste0(seq(1, MAX_MODES), " pic(s)")
+  )
+bandwiths$Station <- names(Data_list)
+for (st in bandwiths$Station) {
+  print('=========================')
+  print(st)
+  print('=========================')
+  
+  df_rescaled_list <- 
+      Data_list[[st]] |> 
+      rescale()
+  
+  for (i in 1:MAX_MODES) {
+    bw <- 
+      df_rescaled_list$Data$Temp |> 
+      multimode::bw.crit(mod0 = i)
+    
+    bandwiths[bandwiths$Station == st,][,i+1] <- bw
+  }
+}
+```
+
+
+## Calculate the gabs of bandwiths
+It is clear that we can't find a bandwith that applies to all the stations, for 
+the purpose of comparaison we'll find an interval that can apply to all or most of the stations. 
+
+We begin by calculating the gabs between bandwiths for every station.
+
+```{r}
+
+get_bw_gap <- function(df, bw_start = .5){
+  df_temp <- df
+  for (i in 1:(ncol(df) - 1)) {
+    df_temp[paste0(i, " pic(s)")] <-
+      bw_start - df[[paste0(i, " pic(s)")]]
+  }
+  bws_gap_df <- df
+
+  bws_gap_df$`1 pic(s)` <-
+    bw_start - df$`1 pic(s)`
+  
+  for (st in bws_gap_df$Station) {
+    for (i in 2:(ncol(df) - 1)) {
+      x <- df_temp[df_temp$Station == st, i+1]
+      if(x < 0) {
+        bws_gap_df[bws_gap_df$Station == st, i+1] <- 0
+      } else {
+        bws_gap_df[bws_gap_df$Station == st, i+1] <-
+          df[df$Station == st, i] -
+          df[df$Station == st, i+1]
+      }
+    }
+  }
+  # for (i in 2:(ncol(df) - 1)) {
+  #   bws_gap_df[paste0(i, " pic(s)")] <-
+  #     as.numeric(as.vector(
+  #       df[[paste0(i-1, " pic(s)")]]
+  #     )) - as.numeric(as.vector(
+  #       df[[paste0(i, " pic(s)")]]
+  #     ))
+  # }
+  bws_gap_df[["0 pic(s)"]] <- ifelse(
+    bws_gap_df[,ncol(df)] < 0,
+    1,
+    0
+  )
+  bws_gap_df[,c(1, MAX_MODES+2, seq(2, MAX_MODES+1))]
+  # df_temp
+}
+
+opt_n_modes <- function(gap){
+  df <- gap |> 
+    dplyr::select(Station) |> 
+    dplyr::mutate(N_modes = 0)
+  
+  for (st in gap$Station) {
+    df[df$Station == st,
+       'N_modes'] <- 
+      gap[gap$Station == st, -1] |> 
+      # abs() |>
+      as.numeric() |> 
+      which.max()
+      
+  }
+  df$N_modes <- (df$N_modes - 1) |> 
+    factor(levels = seq(0, MAX_MODES))
+  return(df)
+}
+
+bandwiths |> 
+  get_bw_gap(bw_start = 0) |> 
+  opt_n_modes()
+# x[x$Station == st, -1]
+# x[x$Station == st, -1] |> as.numeric() |> which.max()
+```
+
+```{r}
+N_modes_df <- 
+  matrix(
+  ncol = MAX_MODES + 2,
+  nrow = length(seq(0.02, 0.4, 0.0001))
+) |> as.data.frame()
+
+names(N_modes_df) <- 
+  c(
+    "Starting bw",
+    paste0(seq(0, MAX_MODES), " pic(s)")
+  )
+
+
+N_modes_df$`Starting bw` <- seq(0.02, 0.4, 0.0001)
+for (i in N_modes_df$`Starting bw`) {
+  print(i)
+  x <- bandwiths |> 
+    get_bw_gap(bw_start = i) |> 
+    opt_n_modes() |> 
+    dplyr::select(N_modes)
+  levels(x$N_modes) <- seq(0, MAX_MODES)
+  
+  
+  N_modes_df[
+      N_modes_df$`Starting bw` == i, -1
+      # c('One mode', 'Two modes', 'Three modes')
+    ] <- x |> table()
+}
+N_modes_df_long <- N_modes_df |> 
+  melt(id.vars = c("Starting bw"),
+  variable.name = "N_pics")
+colnames(N_modes_df_long) <- c("Starting bw", "Number of pics", "Number of stations")
+```
+```{r}
+N_modes_df_long[N_modes_df_long$`Number of pics` == "0 pic(s)",]
+
+idx <- which(N_modes_df_long$`Number of pics` == "0 pic(s)")
+N_modes_df_long <- N_modes_df_long[-idx,]
+```
+
+```{r}
+library(ggplot2)
+fig <- 
+  N_modes_df_long |> 
+  ggplot(aes(`Starting bw`, `Number of stations`)) +
+  geom_line(aes(color = `Number of pics`)) +
+  theme_classic() +
+  scale_color_brewer(palette = "Dark2") +
+  labs(
+    x = "Starting bundwith",
+    y = "Number of stations",
+    color = "Number of pics"
+  )
+fig
+ggsave("Figures/fig308.pdf", width = 7, height = 5)
+```
+
+
+```{r}
+library(plotly)
+ggplotly(fig)
+```
+
+## Save
+This script save the last graphic into the sepecified path
+```{r}
+library(ggpubr)
+
+path <- "Figures/fig.pdf"
+ggsave(filename = path, width = 7, height = 5)
+```
+
+```{r}
+N_modes_df_long[
+  N_modes_df_long$`Starting bw` == 0.028,
+]
+
+x <- bandwiths |> 
+    get_bw_gap(bw_start = 0.0288) |>
+    opt_n_modes()
+x[x$N_modes == 2,]
+x$N_modes |> table()
+```
+
+```{r}
+x <- X92st_list |> 
+  dplyr::select(St_Name, PR, Lat, Long) |> 
+  dplyr::rename(Station = St_Name) |> 
+  dplyr::left_join(x, by = "Station")
+x
+```
+
+```{r}
+wmap <- map_data("world")
+ca <- wmap |> dplyr::filter(region == "Canada")
+mp92 <- ca |> ggplot(aes(long, lat)) +
+  geom_path(aes(x = long, y = lat, group = group),
+                color = "#737373") +
+  geom_polygon(aes(group = group, subgroup = subregion),
+                   fill = "#f0f0f0", color = "#525252")+
+  scale_color_brewer(palette = "Dark2") +
+      theme_void() +
+  geom_point(
+        data = x, 
+        aes(x = Long, y = Lat,# shape = N_modes,
+            fill = N_modes, label = Station),
+        size = 3, shape = 21
+      )+
+  labs(fill = "Number of pics")
+mp92
+ggsave("Figures/fig309.pdf", width = 7, height = 5)
+```
+
+```{r}
+ggplotly(mp92)
+```
+
+```{r}
+selected_stations <- x[x$N_modes == 2,]$Station
+
+modes_locations_df <- matrix(
+  nrow = length(selected_stations),
+  ncol = 3
+) |> as.data.frame()
+colnames(modes_locations_df) <- c("Station", "Mode 1", "Mode 2")
+modes_locations_df$Station <- selected_stations
+for (st in selected_stations) {
+  print(paste("---------------", st, "----------------"))
+  
+  df_rescaled_list <- 
+      Data_list[[st]] |> 
+      rescale()
+  df_max <- df_rescaled_list$Max
+  df_min <- df_rescaled_list$Min
+  
+  modes <- df_rescaled_list$Data$Temp |> 
+    multimode::locmodes(mod0 = 2)
+  modes_loc <- modes$locations[-2]
+  modes_loc <-
+    (modes_loc * (df_max - df_min)) + df_min
+  
+  modes_locations_df[
+    modes_locations_df$Station == st, -1
+  ] <- modes_loc
+}
+modes_locations_df <- 
+  X92st_list |> 
+  dplyr::select(St_Name, PR, Lat, Long) |> 
+  dplyr::rename(Station = St_Name) |> 
+  dplyr::left_join(modes_locations_df, by = "Station")
+```
+
+```{r}
+ca |> ggplot(aes(long, lat)) +
+  geom_path(aes(x = long, y = lat, group = group),
+                color = "#737373") +
+  geom_polygon(aes(group = group, subgroup = subregion),
+                   fill = "#f0f0f0", color = "#525252")+
+  scale_color_brewer(palette = "Dark2") +
+      theme_void() +
+  geom_point(
+        data = modes_locations_df, 
+        aes(x = Long, y = Lat,# shape = N_modes,
+            fill = `Mode 2`, label = Station),
+        size = 3, shape = 21
+      )
+```
+
+```{r}
+df_modes <- matrix(nrow = 0, ncol = 6) |> as.data.frame()
+colnames(df_modes) <- c("Station", "Year", "Mode_1", "Mode_2", "fvalue_1", "fvalue_2")
+for (st in selected_stations) {
+  print(paste("---------------", st, "----------------"))
+  df_data <- Data_list[[st]]
+  yrs <- df_data$Year |> unique()
+  df_yr_modes <- data.frame(
+    Station = rep(st, length(yrs)),
+    Year = yrs,
+    Mode_1 = rep(NA, length(yrs)),
+    Mode_2 = rep(NA, length(yrs)),
+    fvalue_1 = rep(NA, length(yrs)),
+    fvalue_2 = rep(NA, length(yrs))
+  )
+  for (yr in yrs) {
+    print(yr)
+    df_data_yr <- df_data$Temp[df_data$Year == yr]
+    modes <- df_data_yr |> multimode::locmodes(mod0 = 2)
+    modes_locs <- modes$locations[-2]
+    modes_fval <- modes$fvalue[-2]
+    df_yr_modes[df_yr_modes$Station == st &
+                  df_yr_modes$Year == yr,c(3:4)] <- modes_locs
+    df_yr_modes[df_yr_modes$Station == st &
+                  df_yr_modes$Year == yr,c(5:6)] <- modes_fval
+  }
+  df_modes <- df_modes |> rbind(df_yr_modes)
+}
+```
+
+```{r}
+df_modes_statisctics <-
+  df_modes |> 
+  group_by(Station) |> 
+  summarise(
+    mean_M_1 = mean(Mode_1),
+    mean_M_2 = mean(Mode_2),
+    gap_M_1_M_2 = mean(Mode_2) - mean(Mode_1),
+    max_M_1 = mean(Mode_1) + (sqrt(var(Mode_1))/2),
+    min_M_1 = mean(Mode_1) - (sqrt(var(Mode_1))/2),
+    max_M_2 = mean(Mode_2) + (sqrt(var(Mode_2))/2),
+    min_M_2 = mean(Mode_2) - (sqrt(var(Mode_2))/2),
+    mean_F_1 = mean(fvalue_1),
+    mean_F_2 = mean(fvalue_2),
+    max_F_1 = mean(fvalue_1) + (sqrt(var(fvalue_1))/2),
+    min_F_1 = mean(fvalue_1) - (sqrt(var(fvalue_1))/2),
+    max_F_2 = mean(fvalue_2) + (sqrt(var(fvalue_2))/2),
+    min_F_2 = mean(fvalue_2) - (sqrt(var(fvalue_2))/2)
+   )
+df_modes_statisctics <-
+  df_modes_statisctics |> 
+  dplyr::mutate(
+    M_1_tresh = ifelse(
+      mean_M_1 <= 2 & mean_M_1 >= -2,
+      "Yes",
+      "No"
+    ),
+    M_2_tresh = ifelse(
+      mean_M_2 <= 2 & mean_M_2 >= -2,
+      "Yes",
+      "No"
+    )
+  )
+
+X92 <- X92st_list
+X92$Region <- ""
+X92[X92$PR == "BC", "Region"] <- 
+  "British Columbia"
+X92[X92$PR == "AB" | X92$PR == "SK" | X92$PR == "MB", "Region"] <- 
+  "Prairies"
+X92[X92$PR == "ON", "Region"] <- 
+  "Ontario"
+X92[X92$PR == "QC", "Region"] <- 
+  "Quebec"
+X92[X92$PR == "NB" | X92$PR == "PE" | X92$PR == "NS" | X92$PR == "NL", "Region"] <- 
+  "Atlantic"
+X92[X92$PR == "YK" | X92$PR == "NT" | X92$PR == "NU", "Region"] <- 
+  "Northern"
+X92st_list <- X92
+df_modes_statisctics <- 
+  X92st_list |> 
+  dplyr::mutate(Station = St_Name) |> 
+  dplyr::select(Station, PR, Region, Lat, Long) |> 
+  merge(
+    df_modes_statisctics,
+    by = "Station"
+  )
+
+df_modes_statisctics |> head()
+```
+
+```{r}
+wmap <- map_data("world")
+ca <- wmap |> dplyr::filter(region == "Canada")
+mp92 <- ca |> ggplot(aes(long, lat)) +
+  geom_path(aes(x = long, y = lat, group = group),
+            color = "black") +
+  geom_polygon(aes(group = group, subgroup = subregion),
+               fill = "#e0e0e0", color = "black")
+
+fig.a <-
+  mp92 +
+  geom_point(
+    data = df_modes_statisctics, 
+    aes(x = Long, y = Lat, color = mean_M_1, shape = M_1_tresh, label = Station),
+    size = 3.5
+  )  +
+  labs(
+    #title = "Mode 1",
+    shape = "T between -2 and 2(B0C) ?",
+    colour = "T(B0C)"
+    # size = "??cart-type"
+  )  +
+  #paletteer::scale_fill_paletteer_c("viridis::plasma") +
+  scale_color_continuous(type = "viridis",
+                         limits = c(-40, 20))+
+  theme_void()
+
+fig.b <-
+  mp92 +
+  geom_point(
+    data = df_modes_statisctics, 
+    aes(x = Long, y = Lat, color = mean_M_2, shape = M_2_tresh, label = Station),
+    size = 3.5
+  )  +
+  labs(
+    #title = "Mode 1",
+    shape = "T between -2 and 2(B0C) ?",
+    colour = "T(B0C)"
+    # size = "??cart-type"
+  )  +
+  #paletteer::scale_fill_paletteer_c("viridis::plasma") +
+  scale_color_continuous(type = "viridis",
+                         limits = c(-30, 20))+
+  theme_void()
+
+fig.c <-
+  mp92 +
+  geom_point(
+    data = df_modes_statisctics, 
+    aes(x = Long, y = Lat, color = gap_M_1_M_2, label = Station),
+    size = 3.5
+  )  +
+  labs(
+    #title = "Mode 1",
+    colour = "T(B0C)"
+    # size = "??cart-type"
+  )  +
+  #paletteer::scale_fill_paletteer_c("viridis::plasma") +
+  scale_color_continuous(type = "viridis",
+                         limits = c(0, 40))+
+  theme_void()
+
+fig.a
+ggplotly(fig.a)
+fig.b
+ggplotly(fig.b)
+fig.c
+ggplotly(fig.c)
+```
+
+```{r}
+fig_m1_m2 <- 
+  df_modes_statisctics |> 
+  ggplot(aes(x = mean_M_1, y = mean_M_2, labels = Station, color = Region)) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = c(-2, 2), linetype=2) +
+  geom_hline(yintercept = c(-2, 2), linetype=2) +
+  geom_segment(aes(
+    x = min_M_1, y = mean_M_2, xend = max_M_1, yend = mean_M_2
+  ), linewidth = .5) +
+  geom_segment(aes(
+    x = mean_M_1, y = min_M_2, xend = mean_M_1, yend = max_M_2
+  ), linewidth = .5) +
+  # stat_cor(method="pearson")
+  labs(
+    #title = "Mode 1 vs Mode 2",
+    x = "Mode 1", #TeX(r'($M_1$)'),
+    y = "Mode 2" #TeX(r'($M_2$)')
+  ) +
+  theme_classic() +
+  scale_color_brewer(palette="Dark2")
+
+fig_m1_m2
+ggsave("Figures/fig310_2.pdf", width = 7, height = 5)
+```
+
+```{r}
+library(ggpubr)
+g1 <- ggarrange(fig.a, fig.b,
+                labels = c("(a) Mode 1", "(b) Mode 2"), hjust = 0)
+g1
+
+ggarrange(g1, fig.c, ncol = 1,
+          heights = c(6, 13),
+          widths = c(9, 9),
+          labels = c("", "(c) Mode2 - Mode1"))
+ggsave("Figures/fig310_1.pdf", width = 7, height = 7)
+```
+
+```{r}
+ggarrange(g1, fig.c, fig_m1_m2, ncol = 1,
+          heights = c(6, 13, 15),
+          widths = c(9, 9, 9),
+          labels = c("", "(c) Mode2 - Mode1", "(d) Mode1 vs Mode2"))
+ggsave("Figures/fig311.pdf", width = 7, height = 10)
+```
+
+```{r}
+# 
+```
+
