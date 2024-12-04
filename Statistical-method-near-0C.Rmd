@@ -1,0 +1,628 @@
+---
+title: "Statistical methods to characterize climatological air temperature distribution"
+# author: "J. M. Thériault1, F. Larribe1, M. Boudaoud1 and (probably Ron Stewart2)"
+output:
+  pdf_document: 
+    toc: true
+    fig_width: 7
+    number_sections: true
+  html_notebook: 
+    toc: true
+    theme: cerulean
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+```
+
+\newpage
+
+\section{Introduction}
+
+The freeze-thaw cycles can have considerable consequences soil structure change (Xie et al., 2017), plant growth (Nilsen et al., 2020), glacier mass balance (reference) and pothole development in roads (Biswas et al., 2018). It affects approximately 55% of the global land surface (Makoto *et al* 2014). Price (1986) pointed out that these instances are most common in high, tropical mountains. These are driven by the air temperature swings at around 0^o^C.
+
+\section{Methodology}
+
+\subsection{Dataset}
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE}
+## Load Stations names 
+X92st_list <- read_excel("Data/92st_list.xlsx")
+X92st_list$St_Name[c(65,66,67)] <- c(
+  "QUEBEC_JEAN LESAGE INTL A",
+  "MONTREAL_PIERRE ELLIOTT TRUDEAU INTL A",
+  "MONTREAL_MIRABEL INT'L A"
+)
+StationsNames <- X92st_list$St_Name
+load("Data/2024-12-03/Data_list.RData")
+```
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE}
+X92 <- X92st_list
+X92$Region <- ""
+X92[X92$PR == "BC", "Region"] <- 
+  "British Columbia"
+X92[X92$PR == "AB" | X92$PR == "SK" | X92$PR == "MB", "Region"] <- 
+  "Prairies"
+X92[X92$PR == "ON", "Region"] <- 
+  "Ontario"
+X92[X92$PR == "QC", "Region"] <- 
+  "Quebec"
+X92[X92$PR == "NB" | X92$PR == "PE" | X92$PR == "NS" | X92$PR == "NL", "Region"] <- 
+  "Atlantic"
+X92[X92$PR == "YK" | X92$PR == "NT" | X92$PR == "NU", "Region"] <- 
+  "Northern"
+X92st_list <- X92
+```
+
+```{r, echo=FALSE, warning=FALSE}
+wmap <- map_data("world")
+ca <- wmap |> dplyr::filter(region == "Canada")
+mp92 <- ca |> ggplot(aes(long, lat)) +
+  geom_path(aes(x = long, y = lat, group = group),
+            color = "black") +
+  geom_polygon(aes(group = group, subgroup = subregion),
+               fill = "#e0e0e0", color = "black")
+
+fig1 <- 
+  mp92 +
+  geom_point(
+    data = X92st_list, 
+    aes(x = Long, y = Lat, color = Region),
+    size = 3.5
+  )  +
+  labs(
+    #title = "Mode 1",
+    colour = "Region"
+  )  +
+  #paletteer::scale_fill_paletteer_c("viridis::plasma") +
+  # scale_color_continuous(type = "viridis",
+  #                        limits = c(-40, 20))+
+  theme_void()
+
+fig1
+```
+
+Figure 1: The spatial distribution of the meteorological stations used for this analysis, by province
+
+\subsection{Statistical method}
+
+Figure 2: Exemples of temperature distribution, in Celcies.
+
+Figure 3: Different estimations of the density of the distribution of temperature of
+
+\subsection{Estimation of the number of peaks for each station}
+
+Figure 4: mode tree for Peace River station. Starting at the top with the bandwidth of h=4, we see only one peak around 10 until h=2.94 (see for example the distribution with h=3.5 at the right/top). Decreasing h shows two peaks until h=0.88 (see for example the distribution with h=1.8 at the right/middle, with the peaks at 1.5 and 11). At a bandwidth of h=0.88 a third peak is discovered, around the value -12, and the situation is stable until multiples peaks appear below h=0.44.
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE}
+locmodes_ <- function (data, bw=NULL, mod0 = 1, lowsup = -Inf, uppsup = Inf, n = 2^15, 
+  tol = 10^(-5), display = F, ...) 
+{
+  if (!is.numeric(data)) 
+    stop("Argument 'data' must be numeric")
+  if (sum(is.na(data)) > 0) 
+    warning("Missing values were removed")
+  data = data[!is.na(data)]
+  ndata = length(data)
+  if (ndata == 0) 
+    stop("No observations (at least after removing missing values)")
+  if (!is.numeric(mod0)) 
+    stop("Argument 'mod0' must be a positive integer number")
+  if ((length(mod0) != 1) | (mod0%%1 != 0) | (mod0 <= 0)) 
+    stop("Argument 'mod0' must be a positive integer number")
+  if (lowsup == -Inf & uppsup == Inf) {
+    warning("If the density function has an unbounded support, artificial modes may have been created in the tails")
+  }
+  if (!is.numeric(lowsup)) {
+    warning("Argument 'lowsup' must be numeric. Default value of 'lowsup' was used")
+    lowsup = -Inf
+  }
+  if (!is.numeric(uppsup)) {
+    warning("Argument 'uppsup' must be numeric. Default value of 'uppsup' was used")
+    uppsup = Inf
+  }
+  if (length(lowsup) == 0) {
+    warning("Argument 'lowsup' must be specified. Default value of 'lowsup' was used")
+    lowsup = -Inf
+  }
+  if (length(uppsup) == 0) {
+    warning("Argument 'uppsup' must be specified. Default value of 'uppsup' was used")
+    uppsup = Inf
+  }
+  if (length(lowsup) > 1) 
+    warning("Argument 'lowsup' has length > 1 and only the first element will be used")
+  if (length(uppsup) > 1) 
+    warning("Argument 'uppsup' has length > 1 and only the first element will be used")
+  lowsup = lowsup[1]
+  uppsup = uppsup[1]
+  if (lowsup == uppsup) {
+    warning("Arguments 'lowsup' and 'uppsup' must be different. Default values of 'lowsup' and 'uppsup' were used")
+    uppsup = Inf
+    lowsup = -Inf
+  }
+  if (((lowsup > -Inf) & (uppsup == Inf)) | ((lowsup == -Inf) & 
+    (uppsup < Inf))) {
+    warning("Both 'lowsup' and 'uppsup' must be finite or infinite. Default values of 'lowsup' and 'uppsup' were used")
+    uppsup = Inf
+    lowsup = -Inf
+  }
+  if (lowsup > uppsup) {
+    warning("Argument 'uppsup' must be greater than 'lowsup'. They were been interchanged")
+    lowsup2 = lowsup
+    lowsup = uppsup
+    uppsup = lowsup2
+  }
+  if (!is.numeric(n)) {
+    warning("Argument 'n' must be a positive integer number. Default value of 'n' was used")
+    n = 2^15
+  }
+  if ((length(n) != 1) | (n%%1 != 0) | (n <= 0)) {
+    warning("Argument 'n' must be a positive integer number. Default value of 'n' was used")
+    n = 2^15
+  }
+  if (!is.numeric(tol)) {
+    warning("Argument 'tol' must be a positive element. Default value of 'tol' was used")
+    tol = 10^(-5)
+  }
+  if ((tol <= 0) | (length(tol) != 1)) {
+    warning("Argument 'tol' must be a positive element. Default value of 'tol' was used")
+    tol = 10^(-5)
+  }
+  if (display != T & display != F) {
+    warning("Argument 'display' must be T or F. Default value of 'display' was used")
+    display = F
+  }
+  if(is.null(bw)){
+    cbw = bw.crit(data, mod0, lowsup, uppsup, n, tol, full.result = T)
+  } else {
+    cbw = list(bw = bw)  # Create a list for consistency
+  }
+  fn = density(data, bw = cbw$bw, n = n)
+  z = c(1:(n - 1))
+  re = z[diff(fn$y) > 0]
+  z2 = c(1:length(re))
+  se = z2[diff(re) > 1]
+  posic = re[se]
+  posicm = re[(se + 1)]
+  if (re[length(re)] < (n - 1)) {
+    posic = c(posic, re[length(re)])
+  }
+  localization = fn$x[(posic + 1)]
+  localizationm = fn$x[(posicm)]
+  flocalization = fn$y[(posic + 1)]
+  flocalizationm = fn$y[(posicm)]
+  posloc2 = which((localization > lowsup) & (localization < 
+    uppsup))
+  localization = localization[posloc2]
+  flocalization = flocalization[posloc2]
+  posloc3 = which((localizationm > localization[1]) & (localizationm < 
+    localization[length(localization)]))
+  localizationm = localizationm[posloc3]
+  flocalizationm = flocalizationm[posloc3]
+  localizations = numeric()
+  localizations = localization[1]
+  if (mod0 > 1) {
+    for (l in 1:(mod0 - 1)) {
+      localizations[(2 * l)] = localizationm[l]
+      localizations[(2 * l + 1)] = localization[(l + 1)]
+    }
+  }
+  flocalizations = numeric()
+  flocalizations = flocalization[1]
+  if (mod0 > 1) {
+    for (l in 1:(mod0 - 1)) {
+      flocalizations[(2 * l)] = flocalizationm[l]
+      flocalizations[(2 * l + 1)] = flocalization[(l + 
+        1)]
+    }
+  }
+  cbw[['fnx']] <- fn$x
+  cbw[['fny']] <- fn$y
+  loctod = list(localizations, flocalizations, cbw)
+  names(loctod) = c("locations", "fvalue", "cbw")
+  class(loctod) <- "locmod"
+  if (display == T) {
+    plot(loctod, ...)
+  }
+  return(loctod)
+}
+```
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE}
+# bandwiths
+
+df_nmodes_long <- df_nmodes %>% 
+  pivot_longer(
+    cols = -bandwith,
+    names_to = "Station",
+    values_to = "N_modes"
+  )
+
+
+X92st_list |> 
+  dplyr::select(St_Name, PR, Lat, Long, Region) |> 
+  dplyr::rename(Station = St_Name) |> 
+  dplyr::left_join(df_nmodes_long[df_nmodes_long$N_modes < 20,], by = "Station") %>% 
+  ggplot(aes(bandwith, N_modes, fill = Station)) +
+  geom_line(aes(color = Station)) +
+  geom_hline(yintercept = 2, size = 1) +
+  theme(legend.position = "none") +
+  facet_wrap(~Region)
+
+X92st_list |> 
+  dplyr::select(St_Name, PR, Lat, Long, Region) |> 
+  dplyr::rename(Station = St_Name) |> 
+  dplyr::left_join(df_nmodes_long[df_nmodes_long$N_modes < 20,], by = "Station") %>% 
+  ggplot(aes(bandwith, N_modes, fill = Station)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = 2, size = 1) +
+  facet_wrap(~Region)
+
+df_nmodes_long$N_modes[df_nmodes_long$N_modes >= 5] <- 5
+df_nmodes_long %>%
+  group_by(bandwith, N_modes) %>% 
+  count() %>% 
+  mutate(N_modes = as.factor(N_modes)) %>% 
+  ggplot(aes(x = bandwith, y = n, group = N_modes)) +
+  geom_line(aes(color = N_modes))
+
+
+
+plot_modetree <- function(data){
+  st_tree <- data$Temp %>% multimode::modetree(bws = c(.0001, 4))
+  bw <- st_tree$range.bws
+  loc <- st_tree$locations
+
+  # Reshape the data into a long format
+  modetree_long <- as.data.frame(loc) %>%
+    mutate(bandwidth = bw) %>%             # Add bandwidth column
+    pivot_longer(cols = -bandwidth,                # Convert wide to long
+                 names_to = "mode",
+                 values_to = "location") %>%
+    drop_na() 
+  
+  # Plot the mode tree
+  ggplot(modetree_long, aes(x = bandwidth, y = location, group = mode)) +
+    geom_line(size = .8) +
+    # geom_point(color = "red", size = 1) +
+    labs(
+      # title = "Mode Tree Visualization",
+      x = "Bandwidth",
+      y = "Locations"
+    ) +
+    theme_bw() +
+    coord_flip()
+}
+plot_modetree(Data_list$`PORT HARDY A`)
+plot_modetree(Data_list$`VICTORIA INT'L A`)
+
+locmodes_object <- Data_list$`PEACE RIVER A`$Temp %>% multimode::locmodes(mod0 = 2, display = F)
+
+locmodes_object <- locmodes_(data = Data_list$`PEACE RIVER A`$Temp, bw = 3)
+
+# locmodes_object %>% plot_locmodes()
+
+plot_locmodes <- function(data){
+  mode_data <- data.frame(
+    locations = data$locations,
+    fvalue = data$fvalue
+  )
+  
+  # Extract data for density curve
+  density_data <- data.frame(
+    x = data$cbw$fnx,
+    y = data$cbw$fny
+  )
+  
+  # Create ggplot
+  ggplot() +
+    # Plot the density curve
+    geom_line(data = density_data, aes(x = x, y = y), color = "blue", size = 1) +
+    # Plot the modes
+    geom_point(data = mode_data, aes(x = locations, y = fvalue), color = "red", size = 3) +
+    geom_vline(xintercept = mode_data$locations, color = "red", size = 1) +
+    # Add labels and theme
+    labs(
+      title = "Mode Locations and Density Curve",
+      x = "Value",
+      y = "Density"
+    ) +
+    theme_minimal(base_size = 14)
+}
+
+
+# origin_bandwiths %>% 
+#   pivot_longer(
+#     cols = -Station,
+#     names_to = "Modes",
+#     values_to = "Bandwith"
+#   ) %>% 
+#   mutate(Modes = substr(Modes, 1, 1) %>% as.factor()) %>% 
+#   ggplot(aes(x = Bandwith, group = Modes)) +
+#   geom_histogram(
+#     # aes(fill = Modes)
+#     position = "identity",
+#     fill = "blue",
+#     color = "black"
+#   ) +
+#   facet_wrap(~Modes) +
+#   theme_bw()
+```
+
+```{r, echo=FALSE, warning=FALSE}
+load("Data/2024-12-03/N_modes_df_long.RData")
+fig5 <- 
+  N_modes_df_long |> 
+  ggplot(aes(`Starting bw`, `Number of stations`)) +
+  geom_line(aes(color = `Number of pics`)) +
+  theme_classic() +
+  scale_color_brewer(palette = "Dark2") +
+  # geom_vline(xintercept = 0.028, type = "dashed") +
+  labs(
+    x = "Starting bundwith",
+    y = "Number of stations",
+    color = "Number of pics"
+  )
+fig5
+```
+
+Figure 5. Relation between the initial number of bins, and then the bandwidth of the kernel method starting the mode tree method. 
+
+\section{Temperature distributions across Canada}
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE}
+get_bw_gap <- function(df, bw_start){
+  df_temp <- df
+  for (i in 1:(ncol(df) - 1)) {
+    df_temp[paste0(i, " pic(s)")] <-
+      bw_start - df[[paste0(i, " pic(s)")]]
+  }
+  bws_gap_df <- df
+
+  bws_gap_df$`1 pic(s)` <-
+    bw_start - df$`1 pic(s)`
+  
+  for (st in bws_gap_df$Station) {
+    for (i in 2:(ncol(df) - 1)) {
+      x <- df_temp[df_temp$Station == st, i+1]
+      if(x < 0) {
+        bws_gap_df[bws_gap_df$Station == st, i+1] <- 0
+      } else {
+        bws_gap_df[bws_gap_df$Station == st, i+1] <-
+          df[df$Station == st, i] -
+          df[df$Station == st, i+1]
+      }
+    }
+  }
+  bws_gap_df[["0 pic(s)"]] <- ifelse(
+    bws_gap_df[,ncol(df)] < 0,
+    1,
+    0
+  )
+  MAX_MODES <- ncol(df) - 1
+  bws_gap_df[,c(1, MAX_MODES+2, seq(2, MAX_MODES+1))]
+  # df_temp
+}
+
+opt_n_modes <- function(gap){
+  df <- gap |> 
+    dplyr::select(Station) |> 
+    dplyr::mutate(N_modes = 0)
+  
+  for (st in gap$Station) {
+    df[df$Station == st,
+       'N_modes'] <- 
+      gap[gap$Station == st, -1] |> 
+      # abs() |>
+      as.numeric() |> 
+      which.max()
+      
+  }
+  MAX_MODES <- ncol(gap) - 1
+  df$N_modes <- (df$N_modes - 1) |> 
+    factor(levels = seq(0, MAX_MODES))
+  return(df)
+}
+```
+
+```{r, echo=FALSE, include=FALSE, warning=FALSE}
+load("Data/2024-12-03/bandwiths.RData")
+
+N_modes_df_long[
+  N_modes_df_long$`Starting bw` == 0.028,
+]
+
+x <- bandwiths |> 
+    get_bw_gap(bw_start = 0.0288) |>
+    opt_n_modes()
+x[x$N_modes == 2,]
+x$N_modes |> table()
+
+x <- X92st_list |> 
+  dplyr::select(St_Name, PR, Lat, Long) |> 
+  dplyr::rename(Station = St_Name) |> 
+  dplyr::left_join(x, by = "Station")
+x
+```
+
+
+```{r, echo=FALSE, include=TRUE, warning=FALSE}
+wmap <- map_data("world")
+ca <- wmap |> dplyr::filter(region == "Canada")
+fig6 <- ca |> ggplot(aes(long, lat)) +
+  geom_path(aes(x = long, y = lat, group = group),
+                color = "#737373") +
+  geom_polygon(aes(group = group, subgroup = subregion),
+                   fill = "#f0f0f0", color = "#525252")+
+  scale_color_brewer(palette = "Dark2") +
+      theme_void() +
+  geom_point(
+        data = x, 
+        aes(x = Long, y = Lat,# shape = N_modes,
+            fill = N_modes, label = Station),
+        size = 3, shape = 21
+      )+
+  labs(fill = "Number of pics")
+fig6
+```
+
+Figure 6: Number of estimated peaks for each station (31 years)
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE}
+selected_stations <- x$Station[x$N_modes == 2]
+
+modes_locations_df <- matrix(
+  nrow = length(selected_stations),
+  ncol = 4
+) |> as.data.frame()
+colnames(modes_locations_df) <- c("Station", "Mode 1", "Mode 2", "Bandwith")
+modes_locations_df$Station <- selected_stations
+for (st in selected_stations) {
+  print(paste("---------------", st, "----------------"))
+  
+  df_rescaled_list <- 
+      Data_list[[st]] #|> 
+      # rescale()
+  df_max <- df_rescaled_list$Max
+  df_min <- df_rescaled_list$Min
+  
+  modes <- df_rescaled_list$Temp |> 
+    multimode::locmodes(mod0 = 2)
+  modes_loc <- modes$locations[-2]
+  # modes_loc <-
+  #   (modes_loc * (df_max - df_min)) + df_min
+  
+  modes_locations_df[
+    modes_locations_df$Station == st, -1
+  ] <- c(modes_loc, modes$cbw$bw)
+}
+modes_locations_df <- 
+  X92st_list |> 
+  dplyr::select(St_Name, PR, Lat, Long, Region) |> 
+  dplyr::rename(Station = St_Name) |> 
+  dplyr::left_join(modes_locations_df, by = "Station")
+
+modes_locations_df <-
+  modes_locations_df |> 
+  dplyr::mutate(
+    M_1_tresh = ifelse(
+      `Mode 1` <= 2 & `Mode 1` >= -2,
+      "Yes",
+      "No"
+    ),
+    M_2_tresh = ifelse(
+      `Mode 2` <= 2 & `Mode 2` >= -2,
+      "Yes",
+      "No"
+    ),
+    gap_M_1_M_2 = `Mode 2` - `Mode 1`
+  )
+modes_locations_df <- modes_locations_df %>% na.omit()
+save(modes_locations_df, file = "Data/2024-12-03/modes_locations_df.RData")
+```
+
+```{r, echo=FALSE, warning=FALSE}
+fig.a <-
+  mp92 +
+  geom_point(
+    data = modes_locations_df, 
+    aes(x = Long, y = Lat, color = `Mode 1`, shape = M_1_tresh, label = Station),
+    size = 3.5
+  )  +
+  labs(
+    #title = "Mode 1",
+    shape = "T between -2 and 2(C) ?",
+    colour = "T(C)"
+    # size = "??cart-type"
+  )  +
+  #paletteer::scale_fill_paletteer_c("viridis::plasma") +
+  scale_color_continuous(type = "viridis",
+                         limits = c(-40, 30))+
+  theme_void()
+
+fig.b <-
+  mp92 +
+  geom_point(
+    data = modes_locations_df, 
+    aes(x = Long, y = Lat, color = `Mode 2`, shape = M_2_tresh, label = Station),
+    size = 3.5
+  )  +
+  labs(
+    #title = "Mode 1",
+    shape = "T between -2 and 2(C) ?",
+    colour = "T(C)"
+    # size = "??cart-type"
+  )  +
+  #paletteer::scale_fill_paletteer_c("viridis::plasma") +
+  scale_color_continuous(type = "viridis",
+                         limits = c(-40, 30))+
+  theme_void()
+
+fig7 <- ggarrange(fig.a, fig.b, common.legend = TRUE,
+                labels = c("(a) Mode 1", "(b) Mode 2"), hjust = 0)
+```
+
+```{r, echo=FALSE, warning=FALSE, fig.width=8, fig.height=4}
+fig7
+```
+Figure 7: Estimation of mode 1 and mode 2 using 31 years of observations
+
+```{r, echo=FALSE, warning=FALSE}
+fig8 <- 
+  modes_locations_df |> 
+  ggplot(aes(x = `Mode 1`, y = `Mode 2`, labels = Station, color = Region)) +
+  geom_point(size = 2) +
+  geom_vline(xintercept = c(-2, 2), linetype=2) +
+  geom_hline(yintercept = c(-2, 2), linetype=2) +
+  # geom_segment(aes(
+  #   x = min_M_1, y = mean_M_2, xend = max_M_1, yend = mean_M_2
+  # ), linewidth = .5) +
+  # geom_segment(aes(
+  #   x = mean_M_1, y = min_M_2, xend = mean_M_1, yend = max_M_2
+  # ), linewidth = .5) +
+  # stat_cor(method="pearson")
+  labs(
+    #title = "Mode 1 vs Mode 2",
+    x = "Mode 1", #TeX(r'($M_1$)'),
+    y = "Mode 2" #TeX(r'($M_2$)')
+  ) +
+  theme_classic() +
+  scale_color_brewer(palette="Dark2")
+
+fig8
+```
+Figure 8: Links between Mode 1, which is the colder associated with the coldest air temperature and the Mode 2, which is the warmest one
+
+```{r, echo=FALSE, warning=FALSE}
+modes_locations_df <- modes_locations_df %>% 
+  dplyr::mutate(
+    Thresh = ifelse(M_1_tresh == "Yes" | M_2_tresh == "Yes", "Yes", "No")
+  )
+fig9 <-
+  mp92 +
+  geom_point(
+    data = modes_locations_df, 
+    aes(x = Long, y = Lat, color = gap_M_1_M_2, label = Station, shape = Thresh),
+    size = 3.5
+  )  +
+  labs(
+    #title = "Mode 1",
+    colour = "T(B0C)"
+    # size = "??cart-type"
+  )  +
+  #paletteer::scale_fill_paletteer_c("viridis::plasma") +
+  scale_color_continuous(type = "viridis",
+                         limits = c(0, 45))+
+  theme_void()
+
+fig9
+```
+Figure 9: Difference between Mode 1 and Mode 2 with 31 years of observations.
